@@ -285,38 +285,38 @@ pub const CATALOG: &[(&str, &str)] = &[
     ),
 ];
 
-/// Entries whose command name (before the first space) is a prefix match
-/// for the user's partial query. An empty query returns every command,
-/// preserving the catalog order.
-#[must_use]
-pub fn filter_catalog(query: &str) -> Vec<&'static (&'static str, &'static str)> {
-    let q = query.to_ascii_lowercase();
-    CATALOG
-        .iter()
-        .filter(|(usage, _)| {
-            // Strip the leading `/`, then take up to the first space so
-            // "/new xyz" filters on "new".
-            let name = usage
-                .trim_start_matches('/')
-                .split_whitespace()
-                .next()
-                .unwrap_or("");
-            name.starts_with(&q)
-        })
-        .collect()
+/// The command name for a catalog `usage` string: strip the leading `/` and
+/// take everything up to the first space, so `"/new <name>"` → `"new"`.
+fn command_name(usage: &str) -> &str {
+    usage
+        .trim_start_matches('/')
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
 }
 
-/// Return the first command name whose prefix matches, or `None` if
-/// multiple match (ambiguous) or zero match. Used by Tab-autocomplete.
+/// Catalog entries whose command name fuzzy-matches the user's partial query,
+/// ranked best-first. An empty query returns every command in catalog order
+/// (all entries tie at score 0 and the sort is stable).
 #[must_use]
-pub fn unique_completion(query: &str) -> Option<&'static str> {
-    let matches = filter_catalog(query);
-    if matches.len() != 1 {
-        return None;
-    }
-    let usage = matches[0].0;
-    // Extract just the command name for completion.
-    usage.trim_start_matches('/').split_whitespace().next()
+pub fn filter_catalog(query: &str) -> Vec<&'static (&'static str, &'static str)> {
+    let mut scored: Vec<(f64, &'static (&'static str, &'static str))> = CATALOG
+        .iter()
+        .filter_map(|entry| crate::fuzzy::score(query, command_name(entry.0)).map(|s| (s, entry)))
+        .collect();
+    // Lower score = better; stable sort keeps catalog order for ties.
+    scored.sort_by(|a, b| a.0.total_cmp(&b.0));
+    scored.into_iter().map(|(_, entry)| entry).collect()
+}
+
+/// The best fuzzy-matched command name for `query`, or `None` when nothing
+/// matches. Used by Tab-autocomplete: Tab always completes to the top hit,
+/// matching the palette's own ranking.
+#[must_use]
+pub fn top_completion(query: &str) -> Option<&'static str> {
+    filter_catalog(query)
+        .first()
+        .map(|entry| command_name(entry.0))
 }
 
 #[cfg(test)]
@@ -518,10 +518,12 @@ mod tests {
     }
 
     #[test]
-    fn filter_catalog_matches_prefix() {
+    fn filter_catalog_ranks_best_match_first() {
+        // Fuzzy matching may return several hits for "ne", but the prefix
+        // match `/new` must rank first.
         let out = filter_catalog("ne");
-        assert_eq!(out.len(), 1);
-        assert!(out[0].0.starts_with("/new"));
+        assert!(!out.is_empty());
+        assert!(out[0].0.starts_with("/new"), "top was {}", out[0].0);
     }
 
     #[test]
@@ -532,24 +534,26 @@ mod tests {
     #[test]
     fn filter_catalog_case_insensitive() {
         let out = filter_catalog("HELP");
-        assert_eq!(out.len(), 1);
         assert_eq!(out[0].0, "/help");
     }
 
     #[test]
-    fn unique_completion_picks_unambiguous() {
-        assert_eq!(unique_completion("ne"), Some("new"));
+    fn top_completion_picks_best_match() {
+        assert_eq!(top_completion("ne"), Some("new"));
+        assert_eq!(top_completion("hel"), Some("help"));
     }
 
     #[test]
-    fn unique_completion_none_when_ambiguous() {
-        // Both /destroy and /deny start with `de` — ambiguous.
-        assert_eq!(unique_completion("de"), None);
+    fn top_completion_resolves_ambiguous_prefix_to_best() {
+        // Both `/destroy` and `/deny` fuzzy-match "de"; Tab commits to the
+        // top-ranked hit rather than refusing (old prefix behaviour).
+        let out = top_completion("de");
+        assert!(matches!(out, Some("destroy" | "deny")), "got {out:?}");
     }
 
     #[test]
-    fn unique_completion_none_when_no_match() {
-        assert_eq!(unique_completion("xzxzxz"), None);
+    fn top_completion_none_when_no_match() {
+        assert_eq!(top_completion("xzxzxz"), None);
     }
 
     #[test]

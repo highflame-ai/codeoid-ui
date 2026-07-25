@@ -166,12 +166,43 @@ pub enum ConnectionState {
     Failed { reason: String },
 }
 
+/// Placeholder shown in the empty prompt editor. Single source of truth so
+/// every place that (re)builds the `TextArea` stays in sync.
+pub const PROMPT_PLACEHOLDER: &str = "Message…  Enter sends · Shift+Enter newline · Esc blurs";
+
+/// An `@`-file mention the cursor is currently inside. Char indices are into
+/// the referenced prompt line; `query` is the partial path after `@`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Mention {
+    /// Zero-based line (row) of the prompt the mention lives on.
+    pub line: usize,
+    /// Char index of the leading `@`.
+    pub start: usize,
+    /// Char index just past the cursor (exclusive end of the token).
+    pub end: usize,
+    /// Partial path typed after `@` (may be empty right after typing `@`).
+    pub query: String,
+}
+
+/// Clamp a `usize` cursor coordinate into `tui-textarea`'s `u16` space.
+/// Prompts never reach 65 535 rows/cols in practice; saturating keeps the
+/// pedantic truncation lint happy without an unwrap.
+fn clamp_u16(n: usize) -> u16 {
+    u16::try_from(n).unwrap_or(u16::MAX)
+}
+
+/// Apply the prompt editor's standard styling. Used everywhere the editor is
+/// (re)constructed — initial build, post-submit reset, and autocomplete.
+pub(crate) fn configure_prompt(prompt: &mut TextArea<'static>) {
+    prompt.set_cursor_line_style(ratatui::style::Style::default());
+    prompt.set_placeholder_text(PROMPT_PLACEHOLDER);
+}
+
 impl AppState {
     #[must_use]
     pub fn new(auth: AuthOkMsg) -> Self {
         let mut prompt = TextArea::default();
-        prompt.set_cursor_line_style(ratatui::style::Style::default());
-        prompt.set_placeholder_text("Message…  Enter sends · Shift+Enter newline · Esc blurs");
+        configure_prompt(&mut prompt);
         Self {
             auth,
             models: Vec::new(),
@@ -304,8 +335,7 @@ impl AppState {
         }
         // TextArea doesn't have a clear() method; re-initialize.
         let mut fresh = TextArea::default();
-        fresh.set_cursor_line_style(ratatui::style::Style::default());
-        fresh.set_placeholder_text("Message…  Enter sends · Shift+Enter newline · Esc blurs");
+        configure_prompt(&mut fresh);
         self.prompt = fresh;
         Some(text)
     }
@@ -332,6 +362,88 @@ impl AppState {
     #[must_use]
     pub fn command_query(&self) -> Option<&str> {
         self.prompt.lines().first()?.strip_prefix('/')
+    }
+
+    /// The `@`-file mention the cursor currently sits inside, if any.
+    ///
+    /// A mention is the run of non-whitespace characters ending at the cursor
+    /// that begins with `@` at a word boundary (line start or after
+    /// whitespace). The returned [`Mention`] carries the partial path typed
+    /// after `@` and the char range on the line to overwrite on completion.
+    /// Only active while the prompt is focused and not in command mode, so it
+    /// never fights the `/` palette or fires on an unfocused editor.
+    #[must_use]
+    pub fn active_mention(&self) -> Option<Mention> {
+        if self.focus != Focus::Prompt || self.is_command_mode() {
+            return None;
+        }
+        let (row, col) = self.prompt.cursor();
+        let line = self.prompt.lines().get(row)?;
+        let chars: Vec<char> = line.chars().collect();
+        let col = col.min(chars.len());
+
+        let mut start = col;
+        while start > 0 && !chars[start - 1].is_whitespace() {
+            start -= 1;
+        }
+        // Empty token (cursor sits right after whitespace) or a token that
+        // doesn't open with `@` isn't a mention.
+        if start >= col || chars[start] != '@' {
+            return None;
+        }
+        let query: String = chars[start + 1..col].iter().collect();
+        // A second `@` inside the token means this isn't a path (e.g. an
+        // email fragment the walk-back happened to start on) — bail.
+        if query.contains('@') {
+            return None;
+        }
+        Some(Mention {
+            line: row,
+            start,
+            end: col,
+            query,
+        })
+    }
+
+    /// Base directory that `@`-mentions resolve against: the focused session's
+    /// workdir, falling back to the process cwd (then `.`).
+    #[must_use]
+    pub fn mention_base_dir(&self) -> std::path::PathBuf {
+        self.sessions
+            .focused()
+            .map(|s| std::path::PathBuf::from(&s.workdir))
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()))
+    }
+
+    /// Replace an active `@`-mention token with `@<replacement>`, optionally
+    /// appending a trailing space (for files — directories keep the cursor
+    /// after the `/` so the user can keep drilling). Surrounding text on the
+    /// line and the other lines are preserved.
+    pub fn replace_mention(&mut self, mention: &Mention, replacement: &str, trailing_space: bool) {
+        let mut lines: Vec<String> = self.prompt.lines().to_vec();
+        let Some(line) = lines.get_mut(mention.line) else {
+            return;
+        };
+        let chars: Vec<char> = line.chars().collect();
+        let end = mention.end.min(chars.len());
+        let prefix: String = chars[..mention.start].iter().collect();
+        let suffix: String = chars[end..].iter().collect();
+
+        let mut token = String::from("@");
+        token.push_str(replacement);
+        if trailing_space {
+            token.push(' ');
+        }
+        let cursor_col = mention.start + token.chars().count();
+        *line = format!("{prefix}{token}{suffix}");
+
+        let mut fresh = TextArea::new(lines);
+        configure_prompt(&mut fresh);
+        fresh.move_cursor(tui_textarea::CursorMove::Jump(
+            clamp_u16(mention.line),
+            clamp_u16(cursor_col),
+        ));
+        self.prompt = fresh;
     }
 
     /// Record that we've sent `session.attach` for this session. Returns
@@ -1549,5 +1661,80 @@ mod tests {
             "other session's catalog"
         );
         assert_eq!(state.focused_provider_commands().len(), 1);
+    }
+
+    #[test]
+    fn active_mention_detects_token_at_cursor() {
+        let mut state = mk_state();
+        state.prompt.insert_str("look at @src/mod");
+        let m = state.active_mention().expect("mention active");
+        assert_eq!(m.query, "src/mod");
+        assert_eq!(m.start, "look at ".chars().count());
+    }
+
+    #[test]
+    fn active_mention_empty_query_right_after_at() {
+        let mut state = mk_state();
+        state.prompt.insert_str("see @");
+        let m = state.active_mention().expect("mention active");
+        assert_eq!(m.query, "");
+    }
+
+    #[test]
+    fn active_mention_none_without_at_token() {
+        let mut state = mk_state();
+        state.prompt.insert_str("just some text");
+        assert!(state.active_mention().is_none());
+    }
+
+    #[test]
+    fn active_mention_ignores_email_like_token() {
+        let mut state = mk_state();
+        state.prompt.insert_str("ping me@example");
+        assert!(state.active_mention().is_none());
+    }
+
+    #[test]
+    fn active_mention_suppressed_in_command_mode() {
+        let mut state = mk_state();
+        state.prompt.insert_str("/new @foo");
+        assert!(state.active_mention().is_none());
+    }
+
+    #[test]
+    fn active_mention_suppressed_when_prompt_not_focused() {
+        let mut state = mk_state();
+        state.prompt.insert_str("see @foo");
+        state.focus = Focus::Scrollback;
+        assert!(state.active_mention().is_none());
+    }
+
+    #[test]
+    fn replace_mention_file_adds_space_and_preserves_surroundings() {
+        let mut state = mk_state();
+        state.prompt.insert_str("look at @Ca rest");
+        // Put the cursor just past "@Ca" (before the space).
+        state
+            .prompt
+            .move_cursor(tui_textarea::CursorMove::Jump(0, 11));
+        let m = state.active_mention().expect("mention active");
+        assert_eq!(m.query, "Ca");
+
+        state.replace_mention(&m, "Cargo.toml", true);
+        let line = &state.prompt.lines()[0];
+        assert!(
+            line.starts_with("look at @Cargo.toml "),
+            "line was {line:?}"
+        );
+        assert!(line.trim_end().ends_with("rest"), "suffix lost: {line:?}");
+    }
+
+    #[test]
+    fn replace_mention_directory_has_no_trailing_space() {
+        let mut state = mk_state();
+        state.prompt.insert_str("open @sr");
+        let m = state.active_mention().expect("mention active");
+        state.replace_mention(&m, "src/", false);
+        assert_eq!(state.prompt.lines()[0], "open @src/");
     }
 }

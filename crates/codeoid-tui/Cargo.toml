@@ -32,3 +32,4 @@ tracing-subscriber = { workspace = true }
 clap = { workspace = true }
 chrono = { workspace = true }
 unicode-width = { workspace = true }
+syntect = { workspace = true }

@@ -307,8 +307,21 @@ impl App {
                             SessionStatus::Working | SessionStatus::WaitingApproval
                         )
                     });
+                // Tab completes an active `@`-file mention. Like the Esc
+                // interrupt above this is runtime-conditional (it depends on
+                // the cursor sitting inside a mention, plus live filesystem
+                // state), which the static keymap can't express — so it's
+                // resolved here, ahead of resolve() routing Tab to the editor.
+                let mention_tab = prompt_focused
+                    && !command_mode
+                    && !modal_open
+                    && matches!(key.code, crossterm::event::KeyCode::Tab)
+                    && state.active_mention().is_some();
+
                 let action = if esc_interrupts {
                     Some(crate::keymap::Action::Interrupt)
+                } else if mention_tab {
+                    Some(crate::keymap::Action::AutocompleteCommand)
                 } else {
                     resolve(key, prompt_focused, modal_kind, command_mode)
                 };
@@ -401,7 +414,7 @@ impl App {
                 state.prompt.insert_newline();
             }
             Action::AutocompleteCommand => {
-                autocomplete_command(state);
+                autocomplete(state);
             }
             Action::NextSession => {
                 state.sessions.focus_next();
@@ -2199,27 +2212,53 @@ impl App {
     }
 }
 
-/// Tab-autocomplete in command mode: if the user's partial command
-/// uniquely matches a catalog entry, replace the prompt with
-/// `/<full-name> ` (trailing space so they can start typing args). No-op
-/// on ambiguous or zero matches — the palette hint line already tells the
-/// user what their options are.
+/// Tab handler in prompt mode: complete a slash-command when in command mode,
+/// otherwise an active `@`-file mention. No-op when neither applies.
+fn autocomplete(state: &mut AppState) {
+    if state.is_command_mode() {
+        autocomplete_command(state);
+    } else {
+        autocomplete_mention(state);
+    }
+}
+
+/// Tab-autocomplete in command mode: complete the prompt to the top
+/// fuzzy-ranked catalog entry as `/<full-name> ` (trailing space so the user
+/// can start typing args). No-op when nothing matches — the palette hint line
+/// already tells the user what their options are.
 fn autocomplete_command(state: &mut AppState) {
     use tui_textarea::TextArea;
 
     let Some(query) = state.command_query() else {
         return;
     };
-    let Some(full) = commands::unique_completion(query) else {
+    let Some(full) = commands::top_completion(query) else {
         return;
     };
 
     // Rebuild the editor with the completed command + trailing space.
     let mut fresh = TextArea::default();
-    fresh.set_cursor_line_style(ratatui::style::Style::default());
-    fresh.set_placeholder_text("Message…  Enter sends · Shift+Enter newline · Esc blurs");
+    crate::state::configure_prompt(&mut fresh);
     fresh.insert_str(format!("/{full} "));
     state.prompt = fresh;
+}
+
+/// Tab-autocomplete for an active `@`-file mention: replace the token with the
+/// top fuzzy-ranked filesystem entry under the session workdir. Directories
+/// gain a trailing `/` (keep drilling); files gain a trailing space. No-op
+/// when there's no active mention or nothing matches.
+fn autocomplete_mention(state: &mut AppState) {
+    let Some(mention) = state.active_mention() else {
+        return;
+    };
+    let base = state.mention_base_dir();
+    let Some(top) = crate::mention::suggest(&base, &mention.query, 1)
+        .into_iter()
+        .next()
+    else {
+        return;
+    };
+    state.replace_mention(&mention, &top.display, !top.is_dir);
 }
 
 /// PageUp/PageDown step: a viewport-minus-one. Standard pager UX

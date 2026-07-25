@@ -18,6 +18,12 @@
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
+use crate::render::highlight::CodeHighlighter;
+
+/// Fallback colour for code-block content when the language is unknown (or
+/// highlighting fails). Matches the pre-syntect look.
+const CODE_PLAIN: Color = Color::Rgb(180, 230, 180);
+
 /// Render a multi-line markdown string into styled `Line`s.
 ///
 /// `indent` is a prefix string (typically `"  "`) prepended to every line.
@@ -25,12 +31,17 @@ use ratatui::text::{Line, Span};
 pub fn render_markdown_block(text: &str, indent: &str) -> Vec<Line<'static>> {
     let mut out = Vec::with_capacity(text.len() / 40 + 1);
     let mut in_fence = false;
+    // `Some(Some(h))` = highlighting this block; `Some(None)` = in a block
+    // whose language we couldn't resolve (plain fallback); `None` = outside
+    // any fence. Built fresh per fence so parse state doesn't leak.
+    let mut highlighter: Option<Option<CodeHighlighter>> = None;
 
     for raw in text.split('\n') {
         // Fenced code blocks.
         if let Some(rest) = raw.strip_prefix("```") {
             if in_fence {
                 in_fence = false;
+                highlighter = None;
                 out.push(Line::from(vec![
                     Span::raw(indent.to_owned()),
                     Span::styled("└─", Style::default().fg(Color::DarkGray)),
@@ -38,6 +49,7 @@ pub fn render_markdown_block(text: &str, indent: &str) -> Vec<Line<'static>> {
             } else {
                 in_fence = true;
                 let lang = rest.trim();
+                highlighter = Some(CodeHighlighter::for_language(lang));
                 let lang_label = if lang.is_empty() { "code" } else { lang };
                 out.push(Line::from(vec![
                     Span::raw(indent.to_owned()),
@@ -54,14 +66,24 @@ pub fn render_markdown_block(text: &str, indent: &str) -> Vec<Line<'static>> {
         }
 
         if in_fence {
-            out.push(Line::from(vec![
+            let mut spans = vec![
                 Span::raw(indent.to_owned()),
                 Span::styled("│ ", Style::default().fg(Color::DarkGray)),
-                Span::styled(
+            ];
+            // Try the block's highlighter; fall back to flat green on either
+            // an unresolved language or a parser hiccup on this line.
+            let highlighted = highlighter
+                .as_mut()
+                .and_then(|h| h.as_mut())
+                .and_then(|h| h.highlight(raw));
+            match highlighted {
+                Some(code_spans) => spans.extend(code_spans),
+                None => spans.push(Span::styled(
                     raw.to_string(),
-                    Style::default().fg(Color::Rgb(180, 230, 180)),
-                ),
-            ]));
+                    Style::default().fg(CODE_PLAIN),
+                )),
+            }
+            out.push(Line::from(spans));
             continue;
         }
 
@@ -249,13 +271,33 @@ mod tests {
         assert_eq!(lines.len(), 3);
         // opener
         assert!(lines[0].spans.iter().any(|s| s.content.contains("rs")));
-        // body
-        assert!(lines[1]
-            .spans
-            .iter()
-            .any(|s| s.content.as_ref() == "fn main() {}"));
+        // body — highlighting splits the code into several styled spans, so
+        // assert the concatenated content round-trips the source line.
+        let body: String = lines[1].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(body.contains("fn main() {}"), "body was {body:?}");
         // closer
         assert!(lines[2].spans.iter().any(|s| s.content.as_ref() == "└─"));
+    }
+
+    #[test]
+    fn fenced_code_body_is_highlighted() {
+        let lines = render_markdown_block("```rust\nfn main() {}\n```", "");
+        // With a known language the body line carries more than the two
+        // frame spans (indent + gutter), i.e. real highlight spans landed.
+        let frame_spans = 2; // indent + "│ "
+        assert!(
+            lines[1].spans.len() > frame_spans + 1,
+            "expected highlighted spans, got {}",
+            lines[1].spans.len()
+        );
+    }
+
+    #[test]
+    fn fenced_code_unknown_language_falls_back() {
+        let lines = render_markdown_block("```zzznope\nsome text\n```", "");
+        // Unknown language → single plain content span after the gutter.
+        let body: String = lines[1].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(body.contains("some text"));
     }
 
     #[test]

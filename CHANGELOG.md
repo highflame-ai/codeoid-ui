@@ -8,6 +8,25 @@ versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Syntax-highlighted code blocks** — fenced code in assistant markdown is now
+  highlighted by language via `syntect` (pure-Rust `fancy-regex` engine, no C
+  toolchain). Common LLM fence tags (`rust`, `python`, `ts`, `bash`, …) are
+  normalised to the right syntax; unknown languages fall back to the previous
+  flat-green rendering. Highlighting is stateful across a block and paid once
+  per message version through the existing render cache.
+
+- **`@`-file mention autocomplete** — typing `@` in the prompt opens a
+  filesystem palette (relative to the focused session's workdir), fuzzy-ranked
+  against what you've typed. `Tab` completes to the top hit: directories keep a
+  trailing `/` so you can keep drilling, files get a trailing space. Descends
+  subdirectories (`@src/re…`) and reveals dotfiles only when you type a leading
+  dot.
+
+- **Fuzzy slash-command matching** — the `/` command palette and `Tab`
+  completion now rank by a fuzzy subsequence score (consecutive-run and
+  word-boundary bonuses, gap penalties) instead of a strict prefix, so `/expsn`
+  finds `/export` and `Tab` always commits the best match.
+
 - **Multi-provider sessions** (pairs with the daemon's pi backend +
   mid-session switching): `/new <name> [workdir] --provider <id>` creates a
   session on a specific backend, `/provider <id>` switches the focused
