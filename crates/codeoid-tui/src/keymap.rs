@@ -13,6 +13,14 @@ pub enum Action {
     SubmitPrompt,
     NewlineInPrompt,
     AutocompleteCommand,
+    /// Undo the last prompt edit (Ctrl+Z).
+    UndoPrompt,
+    /// Redo the last undone prompt edit (Ctrl+Y).
+    RedoPrompt,
+    /// Recall the previous (older) submitted prompt into the editor.
+    HistoryPrev,
+    /// Recall the next (newer) submitted prompt, or restore the live draft.
+    HistoryNext,
     NextSession,
     PrevSession,
     Interrupt,
@@ -256,6 +264,10 @@ pub fn resolve(
             (Enter, KeyModifiers::NONE) => Some(Action::SubmitPrompt),
             (Enter, m) if m.contains(KeyModifiers::SHIFT) => Some(Action::NewlineInPrompt),
             (Char('j'), KeyModifiers::CONTROL) => Some(Action::NewlineInPrompt),
+
+            // Undo / redo of prompt edits.
+            (Char('z'), KeyModifiers::CONTROL) => Some(Action::UndoPrompt),
+            (Char('y'), KeyModifiers::CONTROL) => Some(Action::RedoPrompt),
 
             // Global controls — always reachable while typing.
             (Char('c'), KeyModifiers::CONTROL) => Some(Action::Quit),
@@ -605,6 +617,33 @@ mod tests {
         // the behaviour should be predictable).
         assert_eq!(
             resolve(key(KeyCode::Tab), true, ModalKind::None, false),
+            None
+        );
+    }
+
+    #[test]
+    fn prompt_ctrl_z_undoes_and_ctrl_y_redoes() {
+        assert_eq!(
+            resolve(ctrl(KeyCode::Char('z')), true, ModalKind::None, false),
+            Some(Action::UndoPrompt)
+        );
+        assert_eq!(
+            resolve(ctrl(KeyCode::Char('y')), true, ModalKind::None, false),
+            Some(Action::RedoPrompt)
+        );
+    }
+
+    #[test]
+    fn prompt_plain_up_down_fall_through_for_runtime_history_gating() {
+        // History recall is decided in the app reducer (it needs the cursor
+        // row + history state), so the static keymap must leave plain Up/Down
+        // unbound in prompt mode — the editor/history handler takes them.
+        assert_eq!(
+            resolve(key(KeyCode::Up), true, ModalKind::None, false),
+            None
+        );
+        assert_eq!(
+            resolve(key(KeyCode::Down), true, ModalKind::None, false),
             None
         );
     }

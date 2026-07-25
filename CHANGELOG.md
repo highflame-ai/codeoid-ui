@@ -8,6 +8,13 @@ versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Prompt history + undo/redo** — `Up`/`Down` in the prompt recall previously
+  submitted messages, shell-style: recall triggers only at the editor's
+  vertical edges (`Up` on the first row, `Down` on the last) so multi-line
+  cursor movement is unaffected, and stepping back down past the newest entry
+  restores your in-progress draft. History is de-duplicated and capped.
+  `Ctrl+Z` / `Ctrl+Y` undo / redo prompt edits.
+
 - **Syntax-highlighted code blocks** — fenced code in assistant markdown is now
   highlighted by language via `syntect` (pure-Rust `fancy-regex` engine, no C
   toolchain). Common LLM fence tags (`rust`, `python`, `ts`, `bash`, …) are
