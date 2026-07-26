@@ -373,6 +373,7 @@ mod tests {
             provider_id: None,
             forked_from: None,
             worktree: None,
+            collaboration: None,
         });
         state.provider_commands.insert(
             "s1".into(),

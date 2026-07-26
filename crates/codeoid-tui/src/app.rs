@@ -2447,6 +2447,9 @@ fn session_create_message(
         name,
         workdir,
         provider_id,
+        // The TUI has no collaborative-create surface yet (that lands with
+        // the extended create dialog); omitted means a normal session.
+        collaboration: None,
     }
 }
 
@@ -2581,6 +2584,7 @@ mod tests {
             provider_id: None,
             forked_from: None,
             worktree: None,
+            collaboration: None,
         });
         state
     }

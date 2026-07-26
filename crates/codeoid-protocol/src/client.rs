@@ -15,7 +15,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json;
 
-use crate::session::SessionMode;
+use crate::session::{CollaborationConfig, SessionMode};
 
 /// Tagged union of every message a client can send the daemon.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,6 +30,13 @@ pub enum ClientMessage {
         /// daemon fail-closes on unknown ids. Absent = daemon default.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         provider_id: Option<String>,
+        /// Make this a collaborative session: one goal worked by several
+        /// role-children on their own backends. Absent = a normal session.
+        /// The daemon validates the semantics (provider registered, exactly
+        /// one orchestrator, claude-only orchestrator in v1) and answers
+        /// with a specific `invalid_request` error.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        collaboration: Option<CollaborationConfig>,
     },
 
     #[serde(rename = "session.list", rename_all = "camelCase")]
