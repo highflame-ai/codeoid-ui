@@ -140,6 +140,9 @@ cargo test -p codeoid-tui state::       # reducer tests (no Tokio, no Ratatui)
 | `Ctrl+X` / `.`         | Interrupt — unconditional aliases   |
 | `Enter`                | Send prompt                         |
 | `Shift+Enter` / `Ctrl+J` | Newline in prompt                 |
+| `Tab` (in prompt)      | Autocomplete — slash-command after `/`, or a file after `@` (fuzzy-ranked; directories keep drilling) |
+| `↑` / `↓` (in prompt)  | Recall previous / next submitted prompt (at the editor's top / bottom edge) |
+| `Ctrl+Z` / `Ctrl+Y`    | Undo / redo prompt edits             |
 | `←` / `→`, `p` / `n`   | Prev / next session                 |
 | `y` / `d`              | Approve / deny pending tool         |
 | `m`                    | Cycle execution mode                |

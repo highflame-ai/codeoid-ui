@@ -31,6 +31,14 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
         return;
     }
 
+    // An active `@`-file mention swaps the row for a filesystem palette,
+    // mirroring the command palette.
+    if let Some(mention) = state.active_mention() {
+        let palette = build_file_palette(state, &mention);
+        frame.render_widget(Paragraph::new(palette).alignment(Alignment::Left), area);
+        return;
+    }
+
     let line = build_line(state).unwrap_or_else(|| idle_line(state));
 
     // Right side: a subtle scroll position hint.
@@ -144,6 +152,65 @@ fn build_palette(state: &AppState) -> Line<'static> {
     // CATALOG: we read it via commands::filter_catalog and commands::CATALOG
     // is only publicly re-exported for tests / future palette pages.
     let _ = CATALOG;
+
+    Line::from(spans)
+}
+
+/// Filesystem palette for an active `@`-mention: the top fuzzy-ranked entries
+/// under the session workdir, with directories flagged by their trailing `/`.
+fn build_file_palette(state: &AppState, mention: &crate::state::Mention) -> Line<'static> {
+    const DISPLAY_LIMIT: usize = 5;
+    let base = state.mention_base_dir();
+    let matches = crate::mention::suggest(&base, &mention.query, DISPLAY_LIMIT + 1);
+
+    let mut spans: Vec<Span<'static>> = vec![
+        Span::raw("  "),
+        Span::styled(
+            "@ ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ];
+
+    if matches.is_empty() {
+        spans.push(Span::styled(
+            format!("no files match “{}”", mention.query),
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        ));
+        return Line::from(spans);
+    }
+
+    let overflow = matches.len() > DISPLAY_LIMIT;
+    for (i, suggestion) in matches.iter().take(DISPLAY_LIMIT).enumerate() {
+        if i > 0 {
+            spans.push(Span::styled("  ·  ", Style::default().fg(Color::DarkGray)));
+        }
+        let color = if suggestion.is_dir {
+            Color::Cyan
+        } else {
+            Color::Gray
+        };
+        spans.push(Span::styled(
+            suggestion.display.clone(),
+            Style::default().fg(color),
+        ));
+    }
+    if overflow {
+        spans.push(Span::styled(
+            "  (+more)",
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC),
+        ));
+    }
+    spans.push(Span::raw("  "));
+    spans.push(Span::styled(
+        "[Tab] picks",
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::ITALIC),
+    ));
 
     Line::from(spans)
 }

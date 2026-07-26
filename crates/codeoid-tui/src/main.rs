@@ -10,7 +10,9 @@
 mod app;
 mod commands;
 mod event;
+mod fuzzy;
 mod keymap;
+mod mention;
 mod render;
 mod state;
 mod ui;

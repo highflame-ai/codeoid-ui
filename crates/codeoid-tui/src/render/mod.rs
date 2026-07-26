@@ -3,6 +3,7 @@
 //! `ui/` so they stay trivially unit-testable.
 
 pub mod ansi;
+pub mod highlight;
 pub mod markdown;
 pub mod parts;
 pub mod sanitize;
