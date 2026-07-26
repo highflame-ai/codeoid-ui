@@ -101,6 +101,12 @@ pub struct SessionInfo {
     /// restart the way `role`/`provider_id` already do.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub collaboration: Option<CollaborationConfig>,
+
+    /// Set when this session is a role-CHILD of a collaborative session.
+    /// Absent = not a collaboration child. Pairs with `collaboration` above,
+    /// which marks the orchestrating parent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collaboration_role: Option<CollaborationRoleRef>,
 }
 
 /// Where a forked session came from — the parent id, the parent's name at
@@ -148,6 +154,32 @@ pub struct CollaborationRole {
     /// What this role is for; surfaced in the child's brief.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub purpose: Option<String>,
+    /// Whether this role's children may modify the workspace.
+    ///
+    /// `None`/`false` = read-only, and that default is load-bearing: the
+    /// daemon gives a read-only role a leaf identity with no write scope at
+    /// all, so a reviewer provably cannot write rather than being asked not
+    /// to. Write authority is opt-in per role.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub write: Option<bool>,
+}
+
+/// Set on a role-CHILD of a collaborative session: which collaboration it
+/// belongs to and which role it plays.
+///
+/// The mirror of [`SessionInfo::collaboration`] (set on the orchestrating
+/// parent), so a client can group a fleet without inferring it from names.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CollaborationRoleRef {
+    /// Session id of the orchestrating parent.
+    pub parent_session_id: String,
+    /// Role name from the parent's config (already lowercased by the daemon).
+    pub role_name: String,
+    /// 1-based index within this role's fan-out (`review` ×3 → 1, 2, 3).
+    pub ordinal: u32,
+    /// Whether this child's identity carries write authority.
+    pub write: bool,
 }
 
 /// Collaborative-session config: one goal worked by several role-children on

@@ -644,6 +644,7 @@ mod tests {
             forked_from: None,
             worktree: None,
             collaboration: None,
+            collaboration_role: None,
         }
     }
 

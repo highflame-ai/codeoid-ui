@@ -127,6 +127,7 @@ fn sample_session_info() -> SessionInfo {
                     model: None,
                     count: None,
                     purpose: None,
+                    write: None,
                 },
                 codeoid_protocol::CollaborationRole {
                     name: "review".into(),
@@ -134,8 +135,17 @@ fn sample_session_info() -> SessionInfo {
                     model: Some("gemini-2.5-pro".into()),
                     count: Some(3),
                     purpose: Some("independent critique".into()),
+                    write: Some(false),
                 },
             ],
+        }),
+        // A real session is either a parent or a child, never both; populated
+        // here anyway so the camelCase walker visits this struct's keys too.
+        collaboration_role: Some(codeoid_protocol::CollaborationRoleRef {
+            parent_session_id: "parent-1".into(),
+            role_name: "review".into(),
+            ordinal: 2,
+            write: false,
         }),
     }
 }
