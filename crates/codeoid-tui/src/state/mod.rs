@@ -13,7 +13,7 @@ pub mod render_cache;
 pub mod scrollback_build;
 pub mod sessions;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use codeoid_protocol::{
     AuthOkMsg, ModelInfo, ProviderCommand, SessionInfo, SessionUiRequestMsg, UiRequestMethod,
@@ -141,8 +141,9 @@ pub struct AppState {
     pub selected_tool_message_id: Option<String>,
     /// Previously submitted prompts, oldest first, for shell-style Up/Down
     /// recall. Capped at [`PROMPT_HISTORY_MAX`]; consecutive duplicates are
-    /// collapsed so hammering the same message doesn't flood the ring.
-    pub prompt_history: Vec<String>,
+    /// collapsed so hammering the same message doesn't flood the ring. A
+    /// `VecDeque` so trimming the oldest entry is an O(1) `pop_front`.
+    pub prompt_history: VecDeque<String>,
     /// Position within [`AppState::prompt_history`] while recalling. `None`
     /// means the user is editing a live draft (not browsing history); `Some(i)`
     /// means the prompt currently mirrors `prompt_history[i]`.
@@ -260,7 +261,7 @@ impl AppState {
             verbose_tool_output: false,
             expanded_tool_message_ids: HashSet::new(),
             selected_tool_message_id: None,
-            prompt_history: Vec::new(),
+            prompt_history: VecDeque::new(),
             history_index: None,
             history_draft: None,
         }
@@ -375,11 +376,11 @@ impl AppState {
     /// Push a submitted prompt onto the recall history (skipping a repeat of
     /// the newest entry) and reset any in-flight history navigation.
     fn record_history(&mut self, text: &str) {
-        if self.prompt_history.last().map(String::as_str) != Some(text) {
-            self.prompt_history.push(text.to_owned());
-            if self.prompt_history.len() > PROMPT_HISTORY_MAX {
-                let excess = self.prompt_history.len() - PROMPT_HISTORY_MAX;
-                self.prompt_history.drain(0..excess);
+        if self.prompt_history.back().map(String::as_str) != Some(text) {
+            self.prompt_history.push_back(text.to_owned());
+            // We only ever add one at a time, so a single pop keeps the cap.
+            while self.prompt_history.len() > PROMPT_HISTORY_MAX {
+                self.prompt_history.pop_front();
             }
         }
         self.history_index = None;
@@ -1835,7 +1836,10 @@ mod tests {
         state.take_prompt();
         state.prompt.insert_str("second");
         state.take_prompt();
-        assert_eq!(state.prompt_history, vec!["first", "second"]);
+        assert_eq!(
+            state.prompt_history.iter().collect::<Vec<_>>(),
+            vec!["first", "second"]
+        );
     }
 
     #[test]
@@ -1904,7 +1908,7 @@ mod tests {
         }
         assert_eq!(state.prompt_history.len(), PROMPT_HISTORY_MAX);
         // Oldest entries dropped off the front; newest retained.
-        assert_eq!(state.prompt_history.last().unwrap(), "msg204");
-        assert_eq!(state.prompt_history.first().unwrap(), "msg5");
+        assert_eq!(state.prompt_history.back().unwrap(), "msg204");
+        assert_eq!(state.prompt_history.front().unwrap(), "msg5");
     }
 }
