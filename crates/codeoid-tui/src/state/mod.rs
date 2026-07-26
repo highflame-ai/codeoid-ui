@@ -213,6 +213,18 @@ pub(crate) fn configure_prompt(prompt: &mut TextArea<'static>) {
     prompt.set_placeholder_text(PROMPT_PLACEHOLDER);
 }
 
+/// Build a configured prompt editor holding `text`, cursor at the very end.
+/// A free function (not a `&mut self` method) so callers can pass a borrow of
+/// another `self` field — e.g. `&self.prompt_history[i]` — without cloning.
+fn prompt_from_text(text: &str) -> TextArea<'static> {
+    let lines: Vec<String> = text.split('\n').map(str::to_owned).collect();
+    let mut prompt = TextArea::new(lines);
+    configure_prompt(&mut prompt);
+    prompt.move_cursor(tui_textarea::CursorMove::Bottom);
+    prompt.move_cursor(tui_textarea::CursorMove::End);
+    prompt
+}
+
 impl AppState {
     #[must_use]
     pub fn new(auth: AuthOkMsg) -> Self {
@@ -374,17 +386,6 @@ impl AppState {
         self.history_draft = None;
     }
 
-    /// Replace the prompt with `text`, cursor at the very end. Used by history
-    /// recall (and any other "load this into the editor" flow).
-    fn set_prompt_text(&mut self, text: &str) {
-        let lines: Vec<String> = text.split('\n').map(str::to_owned).collect();
-        let mut fresh = TextArea::new(lines);
-        configure_prompt(&mut fresh);
-        fresh.move_cursor(tui_textarea::CursorMove::Bottom);
-        fresh.move_cursor(tui_textarea::CursorMove::End);
-        self.prompt = fresh;
-    }
-
     /// Recall the previous (older) prompt from history. On first step it stashes
     /// the current live draft so [`AppState::history_next`] can restore it.
     /// No-op when history is empty.
@@ -401,8 +402,10 @@ impl AppState {
             Some(i) => i - 1,
         };
         self.history_index = Some(index);
-        let text = self.prompt_history[index].clone();
-        self.set_prompt_text(&text);
+        // Borrow the entry directly (no clone): `prompt_from_text` doesn't
+        // touch `self`, so the immutable borrow of `prompt_history` ends
+        // before the assignment to `self.prompt`.
+        self.prompt = prompt_from_text(&self.prompt_history[index]);
     }
 
     /// Recall the next (newer) prompt from history; stepping past the newest
@@ -413,12 +416,11 @@ impl AppState {
         };
         if i + 1 < self.prompt_history.len() {
             self.history_index = Some(i + 1);
-            let text = self.prompt_history[i + 1].clone();
-            self.set_prompt_text(&text);
+            self.prompt = prompt_from_text(&self.prompt_history[i + 1]);
         } else {
             self.history_index = None;
             let draft = self.history_draft.take().unwrap_or_default();
-            self.set_prompt_text(&draft);
+            self.prompt = prompt_from_text(&draft);
         }
     }
 
