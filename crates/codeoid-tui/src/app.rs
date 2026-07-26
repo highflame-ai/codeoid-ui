@@ -318,10 +318,31 @@ impl App {
                     && matches!(key.code, crossterm::event::KeyCode::Tab)
                     && state.active_mention().is_some();
 
+                // Up/Down recall submitted prompts, but only at the vertical
+                // edges of the editor so multi-line cursor movement still works
+                // (Up on the first row, Down on the last). Also runtime-
+                // conditional — it depends on the cursor row and history state.
+                let plain_key = key.modifiers.is_empty();
+                let (cursor_row, _) = state.prompt.cursor();
+                let last_row = state.prompt.lines().len().saturating_sub(1);
+                let recall_ok = prompt_focused && !command_mode && !modal_open && plain_key;
+                let history_prev = recall_ok
+                    && matches!(key.code, crossterm::event::KeyCode::Up)
+                    && cursor_row == 0
+                    && !state.prompt_history.is_empty();
+                let history_next = recall_ok
+                    && matches!(key.code, crossterm::event::KeyCode::Down)
+                    && cursor_row == last_row
+                    && state.history_index.is_some();
+
                 let action = if esc_interrupts {
                     Some(crate::keymap::Action::Interrupt)
                 } else if mention_tab {
                     Some(crate::keymap::Action::AutocompleteCommand)
+                } else if history_prev {
+                    Some(crate::keymap::Action::HistoryPrev)
+                } else if history_next {
+                    Some(crate::keymap::Action::HistoryNext)
                 } else {
                     resolve(key, prompt_focused, modal_kind, command_mode)
                 };
@@ -416,6 +437,14 @@ impl App {
             Action::AutocompleteCommand => {
                 autocomplete(state);
             }
+            Action::UndoPrompt => {
+                state.prompt.undo();
+            }
+            Action::RedoPrompt => {
+                state.prompt.redo();
+            }
+            Action::HistoryPrev => state.history_prev(),
+            Action::HistoryNext => state.history_next(),
             Action::NextSession => {
                 state.sessions.focus_next();
                 state.scroll_to_bottom();

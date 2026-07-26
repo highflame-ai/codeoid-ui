@@ -13,7 +13,7 @@ pub mod render_cache;
 pub mod scrollback_build;
 pub mod sessions;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use codeoid_protocol::{
     AuthOkMsg, ModelInfo, ProviderCommand, SessionInfo, SessionUiRequestMsg, UiRequestMethod,
@@ -139,6 +139,18 @@ pub struct AppState {
     /// focused session. `None` means "no explicit selection yet" and
     /// `Enter` falls back to the most recent tool_call message.
     pub selected_tool_message_id: Option<String>,
+    /// Previously submitted prompts, oldest first, for shell-style Up/Down
+    /// recall. Capped at [`PROMPT_HISTORY_MAX`]; consecutive duplicates are
+    /// collapsed so hammering the same message doesn't flood the ring. A
+    /// `VecDeque` so trimming the oldest entry is an O(1) `pop_front`.
+    pub prompt_history: VecDeque<String>,
+    /// Position within [`AppState::prompt_history`] while recalling. `None`
+    /// means the user is editing a live draft (not browsing history); `Some(i)`
+    /// means the prompt currently mirrors `prompt_history[i]`.
+    pub history_index: Option<usize>,
+    /// The live draft stashed when the user first steps into history, restored
+    /// when they step back down past the newest entry.
+    pub history_draft: Option<String>,
 }
 
 impl std::fmt::Debug for AppState {
@@ -170,6 +182,10 @@ pub enum ConnectionState {
 /// every place that (re)builds the `TextArea` stays in sync.
 pub const PROMPT_PLACEHOLDER: &str = "Message…  Enter sends · Shift+Enter newline · Esc blurs";
 
+/// Cap on remembered prompts for Up/Down recall. Old entries drop off the
+/// front once exceeded — plenty for a session without unbounded growth.
+pub const PROMPT_HISTORY_MAX: usize = 200;
+
 /// An `@`-file mention the cursor is currently inside. Char indices are into
 /// the referenced prompt line; `query` is the partial path after `@`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -196,6 +212,18 @@ fn clamp_u16(n: usize) -> u16 {
 pub(crate) fn configure_prompt(prompt: &mut TextArea<'static>) {
     prompt.set_cursor_line_style(ratatui::style::Style::default());
     prompt.set_placeholder_text(PROMPT_PLACEHOLDER);
+}
+
+/// Build a configured prompt editor holding `text`, cursor at the very end.
+/// A free function (not a `&mut self` method) so callers can pass a borrow of
+/// another `self` field — e.g. `&self.prompt_history[i]` — without cloning.
+fn prompt_from_text(text: &str) -> TextArea<'static> {
+    let lines: Vec<String> = text.split('\n').map(str::to_owned).collect();
+    let mut prompt = TextArea::new(lines);
+    configure_prompt(&mut prompt);
+    prompt.move_cursor(tui_textarea::CursorMove::Bottom);
+    prompt.move_cursor(tui_textarea::CursorMove::End);
+    prompt
 }
 
 impl AppState {
@@ -233,6 +261,9 @@ impl AppState {
             verbose_tool_output: false,
             expanded_tool_message_ids: HashSet::new(),
             selected_tool_message_id: None,
+            prompt_history: VecDeque::new(),
+            history_index: None,
+            history_draft: None,
         }
     }
 
@@ -327,17 +358,71 @@ impl AppState {
     }
 
     /// Drain the prompt into a `String` and reset the editor. Returns
-    /// `None` if the editor was empty (or whitespace-only).
+    /// `None` if the editor was empty (or whitespace-only). Records the
+    /// submitted text in the recall history and resets history navigation.
     pub fn take_prompt(&mut self) -> Option<String> {
         let text = self.prompt.lines().join("\n");
         if text.trim().is_empty() {
             return None;
         }
+        self.record_history(&text);
         // TextArea doesn't have a clear() method; re-initialize.
         let mut fresh = TextArea::default();
         configure_prompt(&mut fresh);
         self.prompt = fresh;
         Some(text)
+    }
+
+    /// Push a submitted prompt onto the recall history (skipping a repeat of
+    /// the newest entry) and reset any in-flight history navigation.
+    fn record_history(&mut self, text: &str) {
+        if self.prompt_history.back().map(String::as_str) != Some(text) {
+            self.prompt_history.push_back(text.to_owned());
+            // We only ever add one at a time, so a single pop keeps the cap.
+            while self.prompt_history.len() > PROMPT_HISTORY_MAX {
+                self.prompt_history.pop_front();
+            }
+        }
+        self.history_index = None;
+        self.history_draft = None;
+    }
+
+    /// Recall the previous (older) prompt from history. On first step it stashes
+    /// the current live draft so [`AppState::history_next`] can restore it.
+    /// No-op when history is empty.
+    pub fn history_prev(&mut self) {
+        if self.prompt_history.is_empty() {
+            return;
+        }
+        let index = match self.history_index {
+            None => {
+                self.history_draft = Some(self.prompt.lines().join("\n"));
+                self.prompt_history.len() - 1
+            }
+            Some(0) => 0, // already at the oldest entry
+            Some(i) => i - 1,
+        };
+        self.history_index = Some(index);
+        // Borrow the entry directly (no clone): `prompt_from_text` doesn't
+        // touch `self`, so the immutable borrow of `prompt_history` ends
+        // before the assignment to `self.prompt`.
+        self.prompt = prompt_from_text(&self.prompt_history[index]);
+    }
+
+    /// Recall the next (newer) prompt from history; stepping past the newest
+    /// entry restores the stashed live draft. No-op when not browsing history.
+    pub fn history_next(&mut self) {
+        let Some(i) = self.history_index else {
+            return;
+        };
+        if i + 1 < self.prompt_history.len() {
+            self.history_index = Some(i + 1);
+            self.prompt = prompt_from_text(&self.prompt_history[i + 1]);
+        } else {
+            self.history_index = None;
+            let draft = self.history_draft.take().unwrap_or_default();
+            self.prompt = prompt_from_text(&draft);
+        }
     }
 
     #[must_use]
@@ -1736,5 +1821,94 @@ mod tests {
         let m = state.active_mention().expect("mention active");
         state.replace_mention(&m, "src/", false);
         assert_eq!(state.prompt.lines()[0], "open @src/");
+    }
+
+    fn prompt_text(state: &AppState) -> String {
+        state.prompt.lines().join("\n")
+    }
+
+    #[test]
+    fn take_prompt_records_history_and_dedups() {
+        let mut state = mk_state();
+        state.prompt.insert_str("first");
+        assert_eq!(state.take_prompt().as_deref(), Some("first"));
+        state.prompt.insert_str("first"); // exact repeat — should not double up
+        state.take_prompt();
+        state.prompt.insert_str("second");
+        state.take_prompt();
+        assert_eq!(
+            state.prompt_history.iter().collect::<Vec<_>>(),
+            vec!["first", "second"]
+        );
+    }
+
+    #[test]
+    fn take_prompt_ignores_blank() {
+        let mut state = mk_state();
+        state.prompt.insert_str("   ");
+        assert!(state.take_prompt().is_none());
+        assert!(state.prompt_history.is_empty());
+    }
+
+    #[test]
+    fn history_prev_walks_backwards_then_pins_at_oldest() {
+        let mut state = mk_state();
+        for msg in ["one", "two", "three"] {
+            state.prompt.insert_str(msg);
+            state.take_prompt();
+        }
+        state.history_prev();
+        assert_eq!(prompt_text(&state), "three");
+        state.history_prev();
+        assert_eq!(prompt_text(&state), "two");
+        state.history_prev();
+        assert_eq!(prompt_text(&state), "one");
+        state.history_prev(); // already oldest — stays put
+        assert_eq!(prompt_text(&state), "one");
+    }
+
+    #[test]
+    fn history_next_restores_live_draft_past_newest() {
+        let mut state = mk_state();
+        state.prompt.insert_str("sent");
+        state.take_prompt();
+        // Start a new draft, then browse into history and back out.
+        state.prompt.insert_str("draft in progress");
+        state.history_prev();
+        assert_eq!(prompt_text(&state), "sent");
+        state.history_next();
+        assert_eq!(prompt_text(&state), "draft in progress");
+        assert!(state.history_index.is_none());
+    }
+
+    #[test]
+    fn history_next_is_noop_when_not_browsing() {
+        let mut state = mk_state();
+        state.prompt.insert_str("sent");
+        state.take_prompt();
+        state.prompt.insert_str("live");
+        state.history_next(); // not in history — must not touch the draft
+        assert_eq!(prompt_text(&state), "live");
+    }
+
+    #[test]
+    fn history_prev_noop_without_history() {
+        let mut state = mk_state();
+        state.prompt.insert_str("typing");
+        state.history_prev();
+        assert_eq!(prompt_text(&state), "typing");
+    }
+
+    #[test]
+    fn history_is_capped() {
+        let mut state = mk_state();
+        for i in 0..(PROMPT_HISTORY_MAX + 5) {
+            state.prompt.insert_str(format!("msg{i}"));
+            state.take_prompt();
+        }
+        assert_eq!(state.prompt_history.len(), PROMPT_HISTORY_MAX);
+        // Oldest entries dropped off the front; newest retained.
+        assert_eq!(state.prompt_history.back().unwrap(), "msg204");
+        assert_eq!(state.prompt_history.front().unwrap(), "msg5");
     }
 }
