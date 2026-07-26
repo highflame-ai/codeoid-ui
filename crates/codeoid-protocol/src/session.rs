@@ -94,6 +94,13 @@ pub struct SessionInfo {
     /// "⎇ <branch>" tag in the session title.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worktree: Option<SessionWorktree>,
+
+    /// Collaboration this session orchestrates — goal + role→backend
+    /// bindings — when it was created with the Collaborative toggle.
+    /// Absent = a normal session. Persisted daemon-side, so it survives a
+    /// restart the way `role`/`provider_id` already do.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collaboration: Option<CollaborationConfig>,
 }
 
 /// Where a forked session came from — the parent id, the parent's name at
@@ -116,6 +123,45 @@ pub struct SessionWorktree {
     pub path: String,
     pub branch: String,
     pub created_by_codeoid: bool,
+}
+
+/// One role in a collaborative session — a `{backend, model}` binding chosen
+/// per purpose.
+///
+/// `name` is a free-form string, not an enum: the role taxonomy is data, so
+/// the daemon can add "security-reviewer" as a config change and this crate
+/// keeps parsing it without a release.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CollaborationRole {
+    pub name: String,
+    /// Backend this role's children run on. The daemon fail-closes on an id
+    /// it does not have registered.
+    pub provider_id: String,
+    /// Model within that backend. `None` = the backend's own default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// How many children to fan out for this role. `None` = 1; >1 is what
+    /// makes a review panel a panel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count: Option<u32>,
+    /// What this role is for; surfaced in the child's brief.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub purpose: Option<String>,
+}
+
+/// Collaborative-session config: one goal worked by several role-children on
+/// possibly different backends. Sent on `session.create` and echoed back on
+/// [`SessionInfo`].
+///
+/// Exactly one role must be named `orchestrator`, and in v1 it must sit on
+/// the claude backend. The daemon enforces both and answers with a specific
+/// error, so this crate carries only the shape.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CollaborationConfig {
+    pub goal: String,
+    pub roles: Vec<CollaborationRole>,
 }
 
 /// Rotation telemetry — how many times the backing Claude Code session has

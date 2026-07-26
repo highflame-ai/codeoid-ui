@@ -118,6 +118,25 @@ fn sample_session_info() -> SessionInfo {
             branch: "codeoid/fix-a1b2".into(),
             created_by_codeoid: true,
         }),
+        collaboration: Some(codeoid_protocol::CollaborationConfig {
+            goal: "Add rate limiting to the public API".into(),
+            roles: vec![
+                codeoid_protocol::CollaborationRole {
+                    name: "orchestrator".into(),
+                    provider_id: "claude".into(),
+                    model: None,
+                    count: None,
+                    purpose: None,
+                },
+                codeoid_protocol::CollaborationRole {
+                    name: "review".into(),
+                    provider_id: "gemini".into(),
+                    model: Some("gemini-2.5-pro".into()),
+                    count: Some(3),
+                    purpose: Some("independent critique".into()),
+                },
+            ],
+        }),
     }
 }
 
@@ -179,6 +198,7 @@ fn client_messages_are_camel_case_on_wire() {
                 name: "n".into(),
                 workdir: "/".into(),
                 provider_id: Some("pi".into()),
+                collaboration: None,
             },
         ),
         ("SessionList", ClientMessage::SessionList { id: "1".into() }),

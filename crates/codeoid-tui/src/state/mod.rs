@@ -1155,6 +1155,7 @@ mod tests {
             provider_id: None,
             forked_from: None,
             worktree: None,
+            collaboration: None,
         }
     }
 
