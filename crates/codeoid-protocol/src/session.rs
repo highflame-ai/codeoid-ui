@@ -162,6 +162,21 @@ pub struct CollaborationRole {
     /// to. Write authority is opt-in per role.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub write: Option<bool>,
+    /// Goal-blackboard artifact kinds this role may READ — `spec`, `research`,
+    /// `adr`, `task-list`, `diff`, `findings`, or `extra/<key>`.
+    ///
+    /// `None` = the daemon's default profile for this role name; a role with no
+    /// profile and no declaration reads nothing. This is what makes reviewer
+    /// independence structural: `review` reads `diff`+`spec` and NOT
+    /// `research` or its peers' `findings`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reads: Option<Vec<String>>,
+    /// Artifact kinds this role may WRITE. `None` = the default profile for
+    /// this role name. A role writing a multi-writer kind (`findings`) writes
+    /// into its own slot, chosen daemon-side, so one reviewer can never
+    /// overwrite another's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub writes: Option<Vec<String>>,
 }
 
 /// Set on a role-CHILD of a collaborative session: which collaboration it
