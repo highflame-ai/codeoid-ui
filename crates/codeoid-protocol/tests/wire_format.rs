@@ -128,6 +128,8 @@ fn sample_session_info() -> SessionInfo {
                     count: None,
                     purpose: None,
                     write: None,
+                    reads: None,
+                    writes: None,
                 },
                 codeoid_protocol::CollaborationRole {
                     name: "review".into(),
@@ -136,6 +138,8 @@ fn sample_session_info() -> SessionInfo {
                     count: Some(3),
                     purpose: Some("independent critique".into()),
                     write: Some(false),
+                    reads: Some(vec!["spec".into(), "diff".into()]),
+                    writes: Some(vec!["findings".into()]),
                 },
             ],
         }),
