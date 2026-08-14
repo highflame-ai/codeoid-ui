@@ -1282,6 +1282,14 @@ impl App {
                 );
                 state.provider_commands.insert(session_id, commands);
             }
+            // Fleet board frames are accepted by the protocol crate but not yet
+            // rendered — the board UI is P5.2. Logged rather than warned: this
+            // TUI never sends `fleet.subscribe`, so receiving one would mean a
+            // stray broadcast, not a client bug, and it must not look like a
+            // forward-compat drop.
+            DaemonMessage::FleetSnapshotResult { .. } | DaemonMessage::FleetUpdate { .. } => {
+                debug!("fleet board frame received; no conductor surface yet (P5.2)");
+            }
             DaemonMessage::Unknown => {
                 warn!("received unknown daemon message; forward-compat drop");
             }
@@ -2636,6 +2644,7 @@ mod tests {
             name: "demo".into(),
             workdir: "/tmp".into(),
             status: SessionStatus::Idle,
+            role: None,
             created_by: "u".into(),
             created_at: "t".into(),
             attached_clients: 0,

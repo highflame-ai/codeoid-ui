@@ -38,22 +38,25 @@ pub mod session;
 pub mod tool;
 
 pub use client::{
-    Attachment, ClientMessage, SearchScope, SendPriority, SessionImportSource, SettingPatch,
+    Attachment, ClientMessage, FleetScope, SearchScope, SendPriority, SessionImportSource,
+    SettingPatch,
 };
 pub use daemon::{
     AuthOkMsg, ClaudeConfigAgent, ClaudeConfigHook, ClaudeConfigMcpServer, ClaudeConfigScope,
-    ClaudeConfigSkill, DaemonMessage, ErrorCode, McpServerStatus, ModelInfo, ProviderCommand,
-    SecretStatus, SessionExportCounts, SessionExportManifest, SessionExportMetaSlim,
-    SessionExportPayload, SessionExportWorkdir, SessionSearchHit, SessionSearchSnippet,
-    SessionUiRequestMsg, SettingError, SettingField, SettingOption, SettingState, SettingsGroup,
-    SettingsManifest, SettingsSnapshot, SettingsTab, UiRequestMethod, UiResolvedReason,
+    ClaudeConfigSkill, DaemonMessage, ErrorCode, FleetDelta, FleetEvent, FleetSnapshot, FleetTask,
+    FleetTaskKind, FleetTaskShape, FleetTaskStatus, FleetUsage, McpServerStatus, ModelInfo,
+    ProviderCommand, SecretStatus, SessionExportCounts, SessionExportManifest,
+    SessionExportMetaSlim, SessionExportPayload, SessionExportWorkdir, SessionSearchHit,
+    SessionSearchSnippet, SessionUiRequestMsg, SettingError, SettingField, SettingOption,
+    SettingState, SettingsGroup, SettingsManifest, SettingsSnapshot, SettingsTab, UiRequestMethod,
+    UiResolvedReason,
 };
 pub use message::{
     ContentPart, IdentityType, MessageIdentity, MessageRole, SessionMessage, SessionMessageDelta,
 };
 pub use session::{
     CollaborationConfig, CollaborationRole, CollaborationRoleRef, ForkedFrom, SessionInfo,
-    SessionMode, SessionStatus, SessionUsage, SessionWorktree, Subagent, TurnUsage,
+    SessionMode, SessionRole, SessionStatus, SessionUsage, SessionWorktree, Subagent, TurnUsage,
 };
 pub use tool::{CancelReason, ConfirmedBy, ToolInfo, ToolPhase, ToolState};
 

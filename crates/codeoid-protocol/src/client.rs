@@ -274,6 +274,28 @@ pub enum ClientMessage {
         id: String,
         patches: Vec<SettingPatch>,
     },
+
+    /// Subscribe to the fleet board: answered with `fleet.snapshot.result`,
+    /// then streamed `fleet.update` deltas until `fleet.unsubscribe` or the
+    /// socket drops. Gated on the `fleet:read` scope.
+    #[serde(rename = "fleet.subscribe", rename_all = "camelCase")]
+    FleetSubscribe {
+        id: String,
+        /// Only `Tenant` today — the caller's own account+project board.
+        scope: FleetScope,
+    },
+
+    /// Stop the delta stream without dropping the connection.
+    #[serde(rename = "fleet.unsubscribe", rename_all = "camelCase")]
+    FleetUnsubscribe { id: String },
+}
+
+/// Breadth of a fleet subscription. Closed on purpose: widening it is an
+/// explicit protocol change on both sides, not something a client can ask for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FleetScope {
+    Tenant,
 }
 
 /// One change requested by `settings.set`, addressed by field `key`. The
@@ -326,7 +348,9 @@ impl ClientMessage {
             | Self::SessionImport { id, .. }
             | Self::SettingsSchema { id }
             | Self::SettingsGet { id }
-            | Self::SettingsSet { id, .. } => id,
+            | Self::SettingsSet { id, .. }
+            | Self::FleetSubscribe { id, .. }
+            | Self::FleetUnsubscribe { id } => id,
         }
     }
 }

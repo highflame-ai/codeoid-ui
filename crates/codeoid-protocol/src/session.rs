@@ -107,6 +107,33 @@ pub struct SessionInfo {
     /// which marks the orchestrating parent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub collaboration_role: Option<CollaborationRoleRef>,
+
+    /// What this session IS in the fleet: the tenant's conductor, a
+    /// dispatch-spawned worker, or — when absent — an ordinary session.
+    ///
+    /// The daemon has carried this on the wire since the conductor shipped;
+    /// this crate simply never modelled it, so the TUI could not so much as
+    /// badge a conductor. Required by the fleet board
+    /// (docs/conductor-frontends-design.md §10–§11).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<SessionRole>,
+}
+
+/// A session's place in the fleet.
+///
+/// `#[serde(other)]` on `Unknown` is load-bearing: this is a client talking to
+/// a daemon that may be NEWER than it. A future role (a domain sub-conductor,
+/// say) must degrade to "some role I don't render" rather than fail to
+/// deserialize the whole `SessionInfo` and blank the session list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SessionRole {
+    /// The per-tenant fleet supervisor.
+    Conductor,
+    /// A disposable worker created by a dispatch.
+    Worker,
+    #[serde(other)]
+    Unknown,
 }
 
 /// Where a forked session came from — the parent id, the parent's name at
