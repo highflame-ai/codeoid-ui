@@ -85,6 +85,7 @@ fn sample_session_info() -> SessionInfo {
         created_at: "2026-04-22T00:00:00Z".into(),
         attached_clients: 1,
         role: Some(SessionRole::Conductor),
+        last_activity_at: Some("2026-04-22T01:00:00Z".into()),
         mode: Some(SessionMode::Interactive),
         turns_remaining: Some(10),
         pinned_files: Some(vec!["README.md".into()]),

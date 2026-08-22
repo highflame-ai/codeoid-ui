@@ -46,6 +46,16 @@ pub struct SessionInfo {
     pub status: SessionStatus,
     pub created_by: String,
     pub created_at: String,
+    /// Last time this session changed state — a turn started, a tool ran, it
+    /// went idle. The ordering key for a relevance-sorted session list; the
+    /// daemon has always tracked it (it orders the resumed list by it) and now
+    /// puts it on the wire.
+    ///
+    /// Absent from a daemon that predates the field: fall back to `created_at`
+    /// rather than treating it as "never active", which would sink every
+    /// session to the bottom.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_activity_at: Option<String>,
     pub attached_clients: u32,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
