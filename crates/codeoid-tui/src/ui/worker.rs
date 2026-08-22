@@ -424,6 +424,8 @@ mod tests {
             name: "demo".into(),
             workdir: "/tmp".into(),
             status: SessionStatus::Idle,
+            role: None,
+            last_activity_at: None,
             created_by: "u".into(),
             created_at: "t".into(),
             attached_clients: 0,

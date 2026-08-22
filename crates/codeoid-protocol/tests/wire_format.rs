@@ -8,9 +8,10 @@
 
 use codeoid_protocol::{
     Attachment, CancelReason, ClientMessage, ConfirmedBy, ContentPart, DaemonMessage, ErrorCode,
+    FleetDelta, FleetScope, FleetTask, FleetTaskKind, FleetTaskShape, FleetTaskStatus,
     IdentityType, MessageIdentity, MessageRole, SearchScope, SendPriority, SessionInfo,
-    SessionMessage, SessionMessageDelta, SessionMode, SessionStatus, SessionUsage, ToolInfo,
-    ToolState,
+    SessionMessage, SessionMessageDelta, SessionMode, SessionRole, SessionStatus, SessionUsage,
+    ToolInfo, ToolState,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -83,6 +84,8 @@ fn sample_session_info() -> SessionInfo {
         created_by: "me".into(),
         created_at: "2026-04-22T00:00:00Z".into(),
         attached_clients: 1,
+        role: Some(SessionRole::Conductor),
+        last_activity_at: Some("2026-04-22T01:00:00Z".into()),
         mode: Some(SessionMode::Interactive),
         turns_remaining: Some(10),
         pinned_files: Some(vec!["README.md".into()]),
@@ -568,4 +571,122 @@ fn tool_completed_roundtrips_confirmed_by() {
         }
         _ => panic!("wrong variant"),
     }
+}
+
+// ── Fleet board: cross-language fixtures ────────────────────────────────────
+//
+// The JSON below was CAPTURED from the real TS daemon (SessionManager handling
+// `fleet.subscribe`, then broadcasting a delta), not hand-written. That is the
+// whole point: this crate is a hand-maintained mirror of a TS contract, and the
+// failure mode is silent field drop on one side. If the daemon's projection
+// changes shape, these stop deserializing.
+
+#[test]
+fn fleet_snapshot_result_parses_real_daemon_json() {
+    let raw = r#"{
+      "type": "fleet.snapshot.result",
+      "requestId": "1",
+      "fleet": {
+        "workers": [],
+        "tasks": [{
+          "id": "1aa8e2c8-6e3c-4b85-9ffc-924ae9eda6f4",
+          "kind": "spawn",
+          "shape": "scout",
+          "status": "queued",
+          "attempts": 0,
+          "createdAt": 1786667059557,
+          "createdBy": "wimse://conductor/acc"
+        }],
+        "events": [],
+        "agg": {
+          "activeTasks": 1, "blockedTasks": 0,
+          "inputTokens": 0, "outputTokens": 0, "totalCostUsd": 0
+        }
+      }
+    }"#;
+
+    let msg: DaemonMessage = serde_json::from_str(raw).expect("daemon JSON must deserialize");
+    let DaemonMessage::FleetSnapshotResult { request_id, fleet } = msg else {
+        panic!("expected FleetSnapshotResult, got {msg:?}");
+    };
+    assert_eq!(request_id, "1");
+    assert!(
+        fleet.conductor.is_none(),
+        "absent conductor is a valid board"
+    );
+    assert_eq!(fleet.tasks.len(), 1);
+    assert_eq!(fleet.tasks[0].kind, FleetTaskKind::Spawn);
+    assert_eq!(fleet.tasks[0].shape, FleetTaskShape::Scout);
+    assert_eq!(fleet.tasks[0].status, FleetTaskStatus::Queued);
+    assert_eq!(fleet.agg.active_tasks, 1);
+    // The daemon must never put the dispatch prompt on the wire, so there is
+    // no field here to hold one.
+    assert!(!raw.contains("\"prompt\""));
+}
+
+#[test]
+fn fleet_update_delta_parses_real_daemon_json() {
+    let raw = r#"{
+      "type": "fleet.update",
+      "delta": {
+        "kind": "task",
+        "task": {
+          "id": "4c2e690f-a7ce-40e2-baee-ad7d4998f892",
+          "kind": "send",
+          "shape": "ship",
+          "status": "queued",
+          "attempts": 0,
+          "createdAt": 1786667059558,
+          "targetSession": "sess-1",
+          "createdBy": "wimse://conductor/acc"
+        },
+        "agg": {
+          "activeTasks": 2, "blockedTasks": 0,
+          "inputTokens": 0, "outputTokens": 0, "totalCostUsd": 0
+        }
+      }
+    }"#;
+
+    let msg: DaemonMessage = serde_json::from_str(raw).expect("daemon JSON must deserialize");
+    let DaemonMessage::FleetUpdate { delta } = msg else {
+        panic!("expected FleetUpdate, got {msg:?}");
+    };
+    let FleetDelta::Task { task, agg } = delta else {
+        panic!("expected a task delta");
+    };
+    assert_eq!(task.kind, FleetTaskKind::Send);
+    assert_eq!(task.target_session.as_deref(), Some("sess-1"));
+    assert_eq!(agg.active_tasks, 2);
+}
+
+#[test]
+fn unknown_enum_values_degrade_instead_of_failing_the_board() {
+    // A client WILL meet a newer daemon. A role/status/shape it has never heard
+    // of must land as Unknown, not poison the whole SessionInfo or task row —
+    // otherwise one new enum value blanks the entire fleet view.
+    let task: FleetTask = serde_json::from_str(
+        r#"{"id":"t","kind":"teleport","shape":"warp","status":"vibing",
+            "attempts":0,"createdAt":1,"createdBy":"c"}"#,
+    )
+    .expect("unknown enum values must still deserialize");
+    assert_eq!(task.kind, FleetTaskKind::Unknown);
+    assert_eq!(task.shape, FleetTaskShape::Unknown);
+    assert_eq!(task.status, FleetTaskStatus::Unknown);
+
+    let role: SessionRole = serde_json::from_str("\"sub-conductor\"").expect("unknown role");
+    assert_eq!(role, SessionRole::Unknown);
+}
+
+#[test]
+fn fleet_subscribe_serializes_the_way_the_daemon_schema_demands() {
+    // The daemon's zod schema pins `scope` to the literal "tenant" and rejects
+    // anything else, so this must not serialize as, say, "Tenant".
+    let json = serde_json::to_value(ClientMessage::FleetSubscribe {
+        id: "r1".into(),
+        scope: FleetScope::Tenant,
+    })
+    .unwrap();
+    assert_eq!(json["type"], "fleet.subscribe");
+    assert_eq!(json["scope"], "tenant");
+    assert_eq!(json["id"], "r1");
 }

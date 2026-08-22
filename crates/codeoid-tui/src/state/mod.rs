@@ -1139,6 +1139,8 @@ mod tests {
             name: "demo".into(),
             workdir: "/tmp".into(),
             status: codeoid_protocol::SessionStatus::Idle,
+            role: None,
+            last_activity_at: None,
             created_by: "u".into(),
             created_at: "2026-06-23T00:00:00Z".into(),
             attached_clients: 0,
