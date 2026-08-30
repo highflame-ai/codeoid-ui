@@ -200,9 +200,150 @@ pub enum DaemonMessage {
         restart_required: bool,
     },
 
+    /// Reply to `fleet.subscribe` — the whole board in one payload.
+    #[serde(rename = "fleet.snapshot.result", rename_all = "camelCase")]
+    FleetSnapshotResult {
+        request_id: String,
+        fleet: FleetSnapshot,
+    },
+
+    /// One incremental board change, pushed to subscribed clients.
+    #[serde(rename = "fleet.update", rename_all = "camelCase")]
+    FleetUpdate { delta: FleetDelta },
+
     /// Forward-compat sink. Preserves raw JSON so the TUI can log it.
     #[serde(other)]
     Unknown,
+}
+
+// ── Fleet board (mirrors codeoid/packages/protocol types.ts) ─────────────────
+
+/// A dispatch task as the board draws it.
+///
+/// Note what is NOT here: the dispatch `prompt` and the worker `workdir`. The
+/// daemon deliberately withholds them — the board renders lifecycle, and the
+/// prompt is the one field on a task row carrying arbitrary user text.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FleetTask {
+    pub id: String,
+    pub kind: FleetTaskKind,
+    pub shape: FleetTaskShape,
+    pub status: FleetTaskStatus,
+    pub attempts: u32,
+    /// Epoch ms.
+    pub created_at: i64,
+    /// spawn: the worker session this task created. Joins to `FleetSnapshot::workers`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker_session_id: Option<String>,
+    /// send: the existing session this task was routed to. Same join.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_session: Option<String>,
+    /// Compressed result — never a raw transcript.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// Conductor WIMSE URI — who dispatched this.
+    pub created_by: String,
+    /// Dispatch group (fan-out barrier); absent = standalone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_id: Option<String>,
+    /// RESERVED — never populated by the daemon today. Present so typed
+    /// fan-in edges are a later non-breaking add.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub depends_on: Option<Vec<String>>,
+}
+
+/// `#[serde(other)]` throughout: a daemon newer than this client must degrade
+/// to an unrendered node, never fail the whole board's deserialization.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FleetTaskKind {
+    Send,
+    Spawn,
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FleetTaskShape {
+    /// Deliver a change.
+    Ship,
+    /// Investigate and report; never pushes.
+    Scout,
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FleetTaskStatus {
+    Queued,
+    Claimed,
+    Running,
+    Done,
+    Failed,
+    /// The failure cap tripped — needs a human, will not retry itself.
+    Blocked,
+    #[serde(other)]
+    Unknown,
+}
+
+/// A dispatch lifecycle event — the audit trail behind the board.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FleetEvent {
+    pub id: i64,
+    pub task_id: String,
+    #[serde(rename = "type")]
+    pub event_type: String,
+    pub digest: String,
+    /// Epoch ms.
+    pub created_at: i64,
+}
+
+/// Fleet-wide rollup, normalized across backends.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FleetUsage {
+    pub active_tasks: u32,
+    pub blocked_tasks: u32,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub total_cost_usd: f64,
+}
+
+/// Everything needed to draw the fleet, in one payload.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FleetSnapshot {
+    /// Absent when the tenant has no conductor — a valid, common state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conductor: Option<SessionInfo>,
+    /// Sessions the board references — spawned workers and dispatch targets.
+    #[serde(default)]
+    pub workers: Vec<SessionInfo>,
+    /// Newest first.
+    #[serde(default)]
+    pub tasks: Vec<FleetTask>,
+    /// Newest first.
+    #[serde(default)]
+    pub events: Vec<FleetEvent>,
+    #[serde(default)]
+    pub agg: FleetUsage,
+}
+
+/// One incremental board change. Carries the FULL row rather than a patch, so a
+/// client that missed a delta still converges and re-delivery is idempotent.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum FleetDelta {
+    #[serde(rename_all = "camelCase")]
+    Task { task: FleetTask, agg: FleetUsage },
+    #[serde(rename_all = "camelCase")]
+    Event { event: FleetEvent, agg: FleetUsage },
 }
 
 // ── Settings manifest + snapshot (mirrors codeoid/packages/protocol settings.ts) ──

@@ -114,6 +114,7 @@ mod tests {
             name: name.into(),
             workdir: "/tmp".into(),
             status: SessionStatus::Idle,
+            role: None,
             created_by: "me".into(),
             created_at: "2026-04-22T00:00:00Z".into(),
             attached_clients: 1,

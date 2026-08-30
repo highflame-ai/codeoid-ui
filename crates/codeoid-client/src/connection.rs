@@ -525,6 +525,8 @@ fn daemon_kind(msg: &DaemonMessage) -> &'static str {
         DaemonMessage::SettingsSchemaResult { .. } => "settings.schema.result",
         DaemonMessage::SettingsGetResult { .. } => "settings.get.result",
         DaemonMessage::SettingsSetResult { .. } => "settings.set.result",
+        DaemonMessage::FleetSnapshotResult { .. } => "fleet.snapshot.result",
+        DaemonMessage::FleetUpdate { .. } => "fleet.update",
         DaemonMessage::Unknown => "unknown",
     }
 }
@@ -569,6 +571,8 @@ fn client_kind(msg: &ClientMessage) -> &'static str {
         ClientMessage::SettingsSchema { .. } => "settings.schema",
         ClientMessage::SettingsGet { .. } => "settings.get",
         ClientMessage::SettingsSet { .. } => "settings.set",
+        ClientMessage::FleetSubscribe { .. } => "fleet.subscribe",
+        ClientMessage::FleetUnsubscribe { .. } => "fleet.unsubscribe",
     }
 }
 
